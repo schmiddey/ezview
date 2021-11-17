@@ -147,6 +147,9 @@ class View:
     set_color(color)
     draw_arc(p.x, p.y, -180, 180, diameter/2, diameter/2)
 
+  @staticmethod
+  def saveWindowAsImage(filename):
+    save_image(filename)
 
 class MouseUtil(object):
   __instance = None
