@@ -332,6 +332,8 @@ class Vehicle(object):
 
     self.mode = mode
     self.size = size
+    self.max_vel_lin = 1.0
+    self.max_vel_ang = 1.0
 
   def __set_geometry(self, pos = Vector2(), orientation_theta = 0):
     self.pos = pos
@@ -358,16 +360,21 @@ class Vehicle(object):
 
   def setVelocity(self, linear = Vector2(0,0), angular = 0):
     self.velocity_lin = linear
-    self.velocity_lin.x = constrain(self.velocity_lin.x, -1, 1)
+    self.velocity_lin.x = self.velocity_lin.x
     if self.mode == "diff":
       # print("mode diff")
       self.velocity_lin.y = 0
     else:
       # print("omni")
-      self.velocity_lin.y = constrain(self.velocity_lin.y, -1, 1)
+      self.velocity_lin.y = self.velocity_lin.y
+
+    #constrain lin vel
+    if self.velocity_lin.length() > self.max_vel_lin:
+      self.velocity_lin.normalize()
+      self.velocity_lin *= self.max_vel_lin
    
     self.velocity_ang = angular
-    self.velocity_ang = constrain(self.velocity_ang, -1, 1)
+    self.velocity_ang = constrain(self.velocity_ang, -1 * self.max_vel_ang, self.max_vel_ang)
 
 
   def tick(self):
