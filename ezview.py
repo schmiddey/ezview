@@ -1,4 +1,7 @@
 from os import stat
+from pathlib import Path
+from pickletools import uint8
+from typing import List
 from easygraphics import *
 from easygraphics.easygraphics import *
 import numpy as np
@@ -6,10 +9,15 @@ import math
 import copy
 import matplotlib.pyplot as plt
 from numpy.core.fromnumeric import size
+import time
 
 
 def constrain(val, min_val, max_val):
   return min(max_val, max(min_val, val))
+
+#ala arduino map
+def rescale(val_in, in_min, in_max, out_min, out_max):
+  return (val_in - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
 
 class View:
   """docstring for View."""
@@ -66,12 +74,23 @@ class View:
   def getMousePressed():
     if has_mouse_msg():
       msg = get_mouse_msg()
+      
       # print(msg.button) #todo 
       if msg.type == MouseMessageType.PRESS_MESSAGE:
-        MouseUtil.instance().setPressEvent()
+        MouseUtil.instance().setPressEvent(msg.button)
       elif msg.type == MouseMessageType.RELEASE_MESSAGE:
         MouseUtil.instance().setReleaseEvent()
     return MouseUtil.instance().isPressed() 
+
+  @staticmethod
+  def waitForMouseRelease():
+    old_state = False
+    while True:
+      if old_state and not View.getMousePressed():
+        break
+      old_state = View.getMousePressed()
+      time.sleep(0.02)
+    pass
 
   @staticmethod
   def isOnPlane(v):
@@ -133,8 +152,21 @@ class View:
     set_line_width(0.5)
 
   @staticmethod
+  def draw_rect(_p, width , height, line_width = 0.5,  color = Color.BLACK):
+    p = View.__flip(_p)
+    set_color(color)
+    set_line_width(line_width)
+    rect(p.x, p.y, p.x + width, p.y -height)
+
+  @staticmethod
+  def draw_filled_rect(_p, width , height, color = Color.BLACK):
+    p = View.__flip(_p)
+    set_color(color)
+    set_fill_color(color)
+    fill_rect(p.x, p.y, p.x + width, p.y -height)
+
+  @staticmethod
   def draw_filled_circ(_p, diameter, color = Color.DARK_CYAN):
-    # print("hans")
     p = View.__flip(_p)
     set_color(color)
     set_fill_color(color)
@@ -146,6 +178,18 @@ class View:
     p = View.__flip(_p)
     set_color(color)
     draw_arc(p.x, p.y, -180, 180, diameter/2, diameter/2)
+
+  @staticmethod
+  def plot(data, diameter = 0.1, color = Color.GREEN):
+    for p in data:
+      View.draw_filled_circ(p, diameter, color)
+    return
+
+  def drawText(text, _p):
+    p = View.__flip(_p)
+    # draw_text(p.x, p.y, text)
+    draw_rect_text(p.y, p.y, 1, 1, text)
+    return
 
   @staticmethod
   def saveWindowAsImage(filename):
@@ -164,18 +208,18 @@ class MouseUtil(object):
     if MouseUtil.__instance != None:
       raise Exception("Only one instance is allowed")
     else:
-      self.is_pressed = False
+      self.is_pressed = 0
       MouseUtil.__instance = self
 
   @staticmethod
-  def setPressEvent():
+  def setPressEvent(value = 1):
     # print("setPressed")
-    MouseUtil.__instance.is_pressed = True
+    MouseUtil.__instance.is_pressed = value
   
   @staticmethod  
   def setReleaseEvent():
     # print("setReleased")
-    MouseUtil.__instance.is_pressed = False
+    MouseUtil.__instance.is_pressed = 0
 
   @staticmethod
   def isPressed():
@@ -184,7 +228,15 @@ class MouseUtil(object):
 
 
 
-    
+
+
+
+
+
+
+
+
+
 
 
 class Vector2(object):
@@ -234,6 +286,10 @@ class Vector2(object):
 
   def draw_vec_orig_reverse(self, orig, color = Color.BLACK):
     View().draw_vector(orig, self, color)
+
+  def draw_vec_trans(self, orig, color = Color.BLACK):
+    vec = self + orig
+    View().draw_vector(vec, orig, color)
   
   def normalize(self):
     norm = np.linalg.norm(self.v)
@@ -249,6 +305,10 @@ class Vector2(object):
 
   def length(self):
     return np.linalg.norm(self.v)
+
+  def lengthTo(self, rhs):
+    tmp_vec: Vector2 = rhs - self
+    return tmp_vec.length()
 
   def rotate(self, angle):
     rot = Rotation2(angle)
@@ -305,6 +365,11 @@ class Vector2(object):
   def __str__(self):
     return "({}, {})".format(self.x, self.y)
 
+  def __eq__(self, rhs: object) -> bool:
+    if abs(self.x - rhs.x) < 0.08 and abs(self.y - rhs.y) < 0.08:
+      return True
+    return False
+
 
 class Rotation2(object):
   """docstring for Rotation2."""
@@ -312,6 +377,7 @@ class Rotation2(object):
     super(Rotation2, self).__init__()
     c, s = np.cos(theta), np.sin(theta)
     self.R = np.array(((c, -s), (s, c)))
+    self.theta = theta
   
   def dot(self, rhs):
     if isinstance(rhs, Vector2):
@@ -321,7 +387,308 @@ class Rotation2(object):
     return Vector2(p[0], p[1])
     
 
+class Pose2D(object):
+  """docstring for pose2d"""
+  def __init__(self, pos: Vector2, rotation: Rotation2):
+    self.pos = copy.deepcopy(pos)
+    self.orientation = copy.deepcopy(rotation)
+  
+  def draw(self, color = Color.BLUE):
+    #draw circle
+    View.draw_filled_circ(self.pos, 0.1, color)
+    #draw 
+    #create vec to draw
+    tmp_vec = copy.deepcopy(self.pos)
+    tmp_vec += Vector2(0.2, 0)
+    tmp_rot_vec = tmp_vec - self.pos
+    tmp_rot_vec = tmp_rot_vec.rotate(self.orientation.theta)
+    tmp_rot_vec += self.pos
+    # View.draw_filled_circ(tmp_vec, 0.2, Color.RED)
+    View.draw_vector(tmp_rot_vec, self.pos, color)
 
+
+
+class GridPoint(object):
+  def __init__(self, _x:int, _y:int):
+    self.x:int = _x
+    self.y:int = _y
+
+  def __str__(self):
+    return "(" + str(self.x) + ", " + str(self.y) + ")"
+
+  def __repr__(self):
+    return "(" + str(self.x) + ", " + str(self.y) + ")"
+
+  def __eq__(self, other):
+    if isinstance(other, GridPoint):
+      return self.x == other.x and self.y == other.y
+    return False
+
+  def __add__(self, other):
+    if isinstance(other, GridPoint):
+      return GridPoint(self.x + other.x, self.y + other.y)
+    return None
+
+  def __sub__(self, other):
+    if isinstance(other, GridPoint):
+      return GridPoint(self.x - other.x, self.y - other.y)
+    return None
+
+
+
+
+
+class Grid(object):
+  def __init__(self, num_cells_edge: int):
+    self.num_cells_edge = num_cells_edge
+    
+    self.__WORLD_WIDTH = 4.0
+    self.__WORLD_MIN_WIDTH = -2.0
+    self.__WORLD_MAX_WIDTH = 2.0
+
+    self.cell_size: float = self.__WORLD_WIDTH / self.num_cells_edge
+
+    self.origin = Vector2(self.__WORLD_MIN_WIDTH + (self.cell_size * 0.5), self.__WORLD_MIN_WIDTH + (self.cell_size * 0.5)) #origin is pos of cell 0,0 (bottom left)
+
+
+    self.cells = [0] * (self.num_cells_edge * self.num_cells_edge) #cell container
+
+    pass
+  
+  def clear(self):
+    self.cells = [0] * (self.num_cells_edge * self.num_cells_edge)
+
+  def setValue(self, p, value):
+    if type(p) == Vector2:
+      self.cells[self.worldTodIdx(p)] = value
+    elif type(p) == GridPoint:
+      self.cells[self.gridPointToIdx(p)] = value
+    else:
+      print("error")
+
+  def getValue(self, p):
+    if type(p) == Vector2:
+      return self.cells[self.worldTodIdx(p)]
+    elif type(p) == GridPoint:
+      return self.cells[self.gridPointToIdx(p)]
+    else:
+      print("error")
+      return None
+
+  def worldToGridPoint(self, v: Vector2) -> GridPoint:
+    #todo check bounds?
+
+    x = (v.x + (self.cell_size * 0.5) - self.origin.x) / self.cell_size
+    y = (v.y + (self.cell_size * 0.5) - self.origin.y) / self.cell_size
+    # print(f"x: {x}, y: {y}")
+    grid_p = GridPoint(int(constrain(x, 0, self.num_cells_edge - 1)),int(constrain(y, 0, self.num_cells_edge - 1)))
+    return grid_p
+
+  def gridPointToIdx(self, p: GridPoint) -> int:
+    idx: int = p.x + p.y * self.num_cells_edge
+    idx = constrain(idx, 0, len(self.cells))
+    return idx
+
+  def worldTodIdx(self, v: Vector2) -> int:
+    # grid_p = self.worldToGridPoint(v)
+    # # print(grid_p)
+    # grid_idx = self.gridPointToIdx(grid_p)
+    # # print(grid_idx)
+    # return grid_idx
+    return self.gridPointToIdx(self.worldToGridPoint(v))
+
+  def idxToWorld(self, idx: int) -> Vector2:
+    return self.gridPointToWorld(self.idxToGridPos(idx))
+
+  def idxToGridPos(self, idx: int) -> GridPoint:
+    x = idx % self.num_cells_edge
+    y = idx // self.num_cells_edge
+    return GridPoint(x, y)
+
+  def gridPointToWorld(self, p) -> Vector2:
+    world_p = Vector2(0.0,0.0)
+    world_p.x = self.origin.x + (p.x * self.cell_size)# + (self.cell_size * 0.5)
+    world_p.y = self.origin.y + (p.y * self.cell_size)# + (self.cell_size * 0.5)
+    return world_p
+
+
+  def draw_cell(self, cell: GridPoint, color = Color.BLACK):
+    vec = self.gridPointToWorld(cell)
+    vec.x -= self.cell_size * 0.5
+    vec.y -= self.cell_size * 0.5
+
+    View.draw_filled_rect(vec, self.cell_size, self.cell_size, color)
+
+
+  def draw_grid(self):
+
+    #draw cells first
+    for i in range(self.num_cells_edge * self.num_cells_edge):
+      if self.cells[i] != 0:
+        # col:Color = 0xB8B8B8
+        tmp: uint8 = self.cells[i]
+        tmp_val : uint8 = round(rescale(tmp, 0, 100, 255, 0))
+        # print(type(tmp_val))
+        col = tmp_val | (tmp_val << 8) | (tmp_val << 16)
+        self.draw_cell(self.idxToGridPos(i), col)
+
+    #draw vertical lines
+    for i in range(self.num_cells_edge):
+      x = i * self.cell_size + self.__WORLD_MIN_WIDTH
+      st =Vector2(  x, self.__WORLD_MIN_WIDTH)
+      end = Vector2(x, self.__WORLD_MAX_WIDTH)
+      View.draw_line(st, end, Color.BLACK)
+
+    #draw horizontal lines
+    for i in range(self.num_cells_edge):
+      y = i * self.cell_size + self.__WORLD_MIN_WIDTH
+      st = Vector2(self.__WORLD_MIN_WIDTH, y)
+      end = Vector2(self.__WORLD_MAX_WIDTH, y)
+      View.draw_line(st, end, Color.BLACK)
+
+    pass
+    
+
+  # def draw_pos_text(self):
+  #   for i in range(self.num_cells_edge * self.num_cells_edge):
+  #     p = self.idxToWorld(i)
+  #     View.drawText(str(i), p)
+  #     # View.draw_text(p, str(i), Color.BLACK)
+
+  def inflate(self, radius):
+    old_cells = copy.deepcopy(self.cells)
+
+    # print('create lut')
+    #create lut circle around midpoint
+    r_pixel: int = round(radius / self.cell_size)
+    # print(f"r_pixel: {r_pixel}")
+    width_pixel: int = 2 * r_pixel + 1
+    # print(f"width_pixel: {width_pixel}")
+    lut = [0] * (width_pixel * width_pixel) 
+    for i in range(len(lut)):
+      x = i % width_pixel
+      y = i // width_pixel
+      if pow(x - r_pixel, 2) + pow(y - r_pixel, 2) <= pow(r_pixel, 2):
+        # print(f"{x}, {y}")
+        lut[i] = 100
+    
+    #apply lut do cells
+    for i in range(len(self.cells)):
+      if(old_cells[i] != 100): #find obstacles
+        continue
+      curr_gp = self.idxToGridPos(i)
+      # print(f"curr_gp: {curr_gp}")
+      #draw circle around current cell based on lut
+      idx_lut = 0
+      for x in range(curr_gp.x - r_pixel, curr_gp.x + r_pixel + 1):
+        for y in range(curr_gp.y - r_pixel, curr_gp.y + r_pixel + 1):
+          tmp_x = constrain(x, 0, self.num_cells_edge - 1)
+          tmp_y = constrain(y, 0, self.num_cells_edge - 1)
+          new_val = lut[idx_lut]
+          # print(f"x: {tmp_x}, y: {tmp_y}, val: {new_val}")
+          idx_lut += 1
+          idx_cells = self.gridPointToIdx(GridPoint(tmp_x, tmp_y))
+          # print(f"idx_cells: {idx_cells}")
+          if self.cells[idx_cells] < new_val:
+            self.cells[idx_cells] = new_val
+
+  def distanceTransform(self, radius):
+    old_cells = copy.deepcopy(self.cells)
+
+    # print('create lut')
+    #create lut circle around midpoint
+    r_pixel: int = round(radius / self.cell_size)
+    # print(f"r_pixel: {r_pixel}")
+    width_pixel: int = 2 * r_pixel + 1
+    # print(f"width_pixel: {width_pixel}")
+    lut = [0] * (width_pixel * width_pixel) 
+    for i in range(len(lut)):
+      x = i % width_pixel
+      y = i // width_pixel
+      dt_r = math.sqrt(pow(x - r_pixel, 2) + pow(y - r_pixel, 2))
+      if round(dt_r) <= r_pixel:
+        # print(f"{x}, {y}")
+        lut[i] = rescale(dt_r, 0, r_pixel, 100, 0)
+    
+    #apply lut to cells
+    for i in range(len(self.cells)):
+      if(old_cells[i] != 100): #find obstacles
+        continue
+      curr_gp = self.idxToGridPos(i)
+      # print(f"curr_gp: {curr_gp}")
+      #draw circle around current cell based on lut
+      idx_lut = 0
+      for x in range(curr_gp.x - r_pixel, curr_gp.x + r_pixel + 1):
+        for y in range(curr_gp.y - r_pixel, curr_gp.y + r_pixel + 1):
+          tmp_x = constrain(x, 0, self.num_cells_edge - 1)
+          tmp_y = constrain(y, 0, self.num_cells_edge - 1)
+          new_val = lut[idx_lut]
+          # print(f"x: {tmp_x}, y: {tmp_y}, val: {new_val}")
+          idx_lut += 1
+          idx_cells = self.gridPointToIdx(GridPoint(tmp_x, tmp_y))
+          # print(f"idx_cells: {idx_cells}")
+          if self.cells[idx_cells] < new_val:
+            self.cells[idx_cells] = new_val
+
+
+
+
+
+
+
+
+
+
+
+
+class Path2D(object):
+  """docstring"""
+  def __init__(self, poses: List[Pose2D] = []):
+    self.poses = copy.deepcopy(poses)
+  def draw(self, color = Color.MAGENTA):
+    for i in range(0,len(self.poses)):
+      #draw point
+      View.draw_filled_circ(self.poses[i].pos, 0.05, color)
+      if i >= 1:
+        #draw line to last
+        View.draw_line(self.poses[i-1].pos, self.poses[i].pos, color, 0.9)
+
+  def drawDetail(self, color = Color.MAGENTA):
+    for i in range(0,len(self.poses)):
+      #draw point
+      self.poses[i].draw(color)
+      if i >= 1:
+        #draw line to last
+        View.draw_line(self.poses[i-1].pos, self.poses[i].pos, color, 0.9)
+
+  def pushBack(self, pose: Pose2D):
+    self.poses.append(pose)
+
+  def at(self, idx: int) -> Pose2D:
+    return self.poses[idx]
+    # pass
+
+  def clear(self):
+    self.poses.clear
+
+class PathClicker(object):
+  """docstring"""
+  def __init__(self) -> None:
+      pass
+  
+  @staticmethod
+  def create(color = Color.DARK_CYAN) -> Path2D:
+    rdy = False
+    path = Path2D()
+    while not rdy:
+      View.waitForMouseRelease()
+      tmp_vec = View.getMouse()
+      if len(path.poses) > 1:
+        if tmp_vec == path.poses[len(path.poses) -1].pos:
+          break
+      path.pushBack(Pose2D(tmp_vec, Rotation2(0)))
+      path.draw(color)
+    return path
 
 class Vehicle(object):
   """docstring for Vehicle."""
