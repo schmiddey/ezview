@@ -12,6 +12,14 @@ from numpy.core.fromnumeric import size
 import time
 
 
+################################################
+## TODO ##
+#
+#
+#
+################################################
+
+
 def constrain(val, min_val, max_val):
   return min(max_val, max(min_val, val))
 
@@ -91,6 +99,21 @@ class View:
       old_state = View.getMousePressed()
       time.sleep(0.02)
     pass
+  
+  @staticmethod
+  def getKey():
+    #todo
+    had_key = False
+    while has_kb_msg():
+      key = get_key()
+      # print(key.type)
+        
+      if key.type == 7:
+        had_key = True
+    return had_key
+
+    # return get_key()
+    # pass
 
   @staticmethod
   def isOnPlane(v):
@@ -413,6 +436,13 @@ class GridPoint(object):
     self.x:int = _x
     self.y:int = _y
 
+  def length(self):
+    return round(math.sqrt(self.x * self.x + self.y * self.y))
+
+  def lengthTo(self, rhs):
+    tmp_vec: Vector2 = rhs - self
+    return tmp_vec.length()
+
   def __str__(self):
     return "(" + str(self.x) + ", " + str(self.y) + ")"
 
@@ -511,6 +541,64 @@ class Grid(object):
     world_p.y = self.origin.y + (p.y * self.cell_size)# + (self.cell_size * 0.5)
     return world_p
 
+  def lockToGrid(self, v: Vector2) -> Vector2:
+    grid_p = self.worldToGridPoint(v)
+    return self.gridPointToWorld(grid_p)
+
+  # def lockToSubGrid(self, v: Vector2, factor) -> Vector2:
+  #   x = (v.x + (self.cell_size * 0.5) - self.origin.x) / self.cell_size
+  #   y = (v.y + (self.cell_size * 0.5) - self.origin.y) / self.cell_size
+  #   # print(f"x: {x}, y: {y}")
+  #   grid_p = GridPoint(int(constrain(x, 0, self.num_cells_edge - 1)),int(constrain(y, 0, self.num_cells_edge - 1)))
+  #   return grid_p
+
+  def interpolateLine(self, p1: GridPoint, p2: GridPoint):
+    line = []
+
+
+    line_start: GridPoint = copy.deepcopy(p1)
+    line_end: GridPoint   = copy.deepcopy(p2)
+  
+    dx = line_end.x - line_start.x
+    dy = line_end.y - line_start.y
+    
+  
+    ix = line_start.x
+    ix_incr = 1 if dx > 0 else -1
+  
+    iy = line_start.y
+    iy_incr = 1 if dy > 0 else -1
+    
+    x_dominant = abs(dx) > abs(dy)
+
+    #first point
+    line.append(line_start)
+
+    if x_dominant:
+      while True:
+        line_cell = GridPoint(0,0)
+        y = int(line_start.y + dy * (ix - line_start.x) / dx)
+        line_cell.x = ix
+        line_cell.y = y
+        line.append(line_cell)
+        ix += ix_incr
+        if ix == line_end.x:
+          break
+    else: #y dominant
+      while True:
+        line_cell = GridPoint(0,0)
+        x = int(line_start.x + dx * (iy - line_start.y) / dy)
+        line_cell.x = x
+        line_cell.y = iy
+        line.append(line_cell)
+        iy += iy_incr
+        if iy == line_end.y:
+          break
+    
+    #last point
+    line.append(line_end)
+    return line
+    
 
   def draw_cell(self, cell: GridPoint, color = Color.BLACK):
     vec = self.gridPointToWorld(cell)
@@ -554,6 +642,26 @@ class Grid(object):
   #     p = self.idxToWorld(i)
   #     View.drawText(str(i), p)
   #     # View.draw_text(p, str(i), Color.BLACK)
+
+  def getCellsInRange(self, p: GridPoint, radius: float) -> list:
+    cells = []
+    # print('--')
+    r_pixel: int = round(radius / self.cell_size)
+    # width_pixel: int = 2 * r_pixel + 1
+    
+    # curr_gp = self.worldToGridPoint(p)
+    curr_gp = p
+
+    for x in range(curr_gp.x - r_pixel, curr_gp.x + r_pixel + 1):
+      for y in range(curr_gp.y - r_pixel, curr_gp.y + r_pixel + 1):
+        tmp_x = constrain(x, 0, self.num_cells_edge - 1)
+        tmp_y = constrain(y, 0, self.num_cells_edge - 1)
+        cell_vec = self.gridPointToWorld(GridPoint(tmp_x, tmp_y))
+        # gp = GridPoint(tmp_x, tmp_y)
+        # print(gp)
+        if pow(x - curr_gp.x, 2) + pow(y - curr_gp.y, 2) <= pow(r_pixel, 2):
+          cells.append(cell_vec)
+    return cells
 
   def inflate(self, radius):
     old_cells = copy.deepcopy(self.cells)
@@ -664,12 +772,32 @@ class Path2D(object):
   def pushBack(self, pose: Pose2D):
     self.poses.append(pose)
 
+  def pop(self): #remove last pose
+    if len(self.poses) > 0:
+      self.poses.pop()
+
   def at(self, idx: int) -> Pose2D:
     return self.poses[idx]
     # pass
 
+  def optimize(self, min_dist: float):
+    new_poses = []
+    new_poses.append(self.poses[0])
+    dist = 0
+    for i in range(0,len(self.poses) - 2):
+      dist += self.poses[i].pos.lengthTo(self.poses[i+1].pos)
+      if dist > min_dist:
+        new_poses.append(self.poses[i+1])
+        dist = 0
+    #append last pose
+    new_poses.append(self.poses[-1])
+    self.poses = copy.deepcopy(new_poses)
   def clear(self):
     self.poses.clear
+
+  def size(self) -> int:
+    return len(self.poses)
+
 
 class PathClicker(object):
   """docstring"""
@@ -758,3 +886,65 @@ class Vehicle(object):
     self.orientation_vec = Vector2(1,0)
     self.orientation_vec = Rotation2(self.orientation_theta).dot(self.orientation_vec)
 
+
+
+class InteractiveGrid(object):
+  def __init__(self, grid_size = 40, inflation_size = 0.2, dt_size = 0.4):
+    self.inflation_size = inflation_size
+    self.dt_size = dt_size
+    self.__grid = Grid(grid_size)
+    self.__grid_inflated = Grid(grid_size)
+
+    self.__grid_inflated.draw_grid()
+
+    self.highlight = False
+    
+    pass
+
+  def grid(self) -> Grid:
+    return self.__grid
+  
+  def grid_inflated(self):
+     return self.__grid_inflated
+  
+  def tick(self):
+    mouse: Vector2 = View.getMouse()
+    mouse_lock = self.__grid.lockToGrid(mouse)
+    mouse_pix =  self.__grid.worldToGridPoint(mouse)
+    # mouse_idx = grid.gridPointToIdx(mouse_pix)
+    
+    mouse_pressed = View.getMousePressed()
+    # key = View.getKey()
+
+
+    
+    if mouse_pressed == 2:
+      self.__grid.setValue(mouse_pix, 100)
+
+    if mouse_pressed == 4:
+      self.__grid.setValue(mouse_pix, 0)
+
+    #copy permanent stuff to grid
+    self.__grid_inflated.cells = copy.deepcopy(self.__grid.cells)
+
+
+    if mouse_pressed == 1:
+      self.__grid_inflated.setValue(mouse_pix, 100)
+
+    
+
+
+    self.__grid_inflated.inflate(self.inflation_size)
+    self.__grid_inflated.distanceTransform(self.dt_size)
+
+    View.clear()
+    self.__grid_inflated.draw_grid()
+    if self.highlight:
+      self.__grid_inflated.draw_cell(GridPoint(0,0), Color.RED)
+
+
+    #draw user stuff
+    View.draw_circ(mouse_lock, 0.25, Color.RED)
+    # grid.draw_cell(mouse_pix, Color.RED)
+
+  
